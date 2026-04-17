@@ -1,6 +1,7 @@
 use uuid::Uuid;
 use serde::{Serialize, Deserialize};
 use chrono::NaiveDate;
+use sqlx::FromRow;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataMaster {
@@ -71,7 +72,7 @@ pub struct PoRow {
     pub target_prod: Option<NaiveDate>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, FromRow)]
 pub struct PoGroupRow {
     pub no_po: String,
     pub kode: Option<String>,

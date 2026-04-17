@@ -497,6 +497,18 @@ fn excel_date_to_naive_date(value: &DataType) -> Option<NaiveDate> {
 }
 
 // ========================
+// HELPER PARSE NUMBER
+// ========================
+fn parse_i64(cell: Option<&DataType>) -> Option<i64> {
+    match cell {
+        Some(DataType::Int(v)) => Some(*v as i64),
+        Some(DataType::Float(v)) => Some(*v as i64),
+        Some(DataType::String(s)) => s.parse::<i64>().ok(),
+        _ => None,
+    }
+}
+
+// ========================
 // PROCESS EXCEL PO
 // ========================
 pub async fn process_excel_create_po_cs(
@@ -558,19 +570,7 @@ pub async fn process_excel_create_po_cs(
 }
 
 // ========================
-// HELPER PARSE NUMBER
-// ========================
-fn parse_i64(cell: Option<&DataType>) -> Option<i64> {
-    match cell {
-        Some(DataType::Int(v)) => Some(*v as i64),
-        Some(DataType::Float(v)) => Some(*v as i64),
-        Some(DataType::String(s)) => s.parse::<i64>().ok(),
-        _ => None,
-    }
-}
-
-// ========================
-// EXPORT EXCEL
+// EXPORT EXCEL (FIX TOTAL)
 // ========================
 pub async fn export_excel(
     pool: &PgPool,
@@ -586,20 +586,25 @@ pub async fn export_excel(
     let sheet = book.get_sheet_by_name_mut("Sheet1").unwrap();
 
     let headers = ["id","nama","kode","contact","no_hp","alamat","tipe"];
+
+    // ✅ FIX HEADER
     for (i, h) in headers.iter().enumerate() {
-        sheet.get_cell_mut((i+1,1)).set_value(h);
+        sheet
+            .get_cell_mut(((i + 1) as u32, 1u32))
+            .set_value(*h);
     }
 
+    // ✅ FIX DATA
     for (i, row) in rows.iter().enumerate() {
-        let r = i + 2;
+        let r = (i + 2) as u32;
 
-        sheet.get_cell_mut((1,r)).set_value(row.get::<Uuid,_>("id").to_string());
-        sheet.get_cell_mut((2,r)).set_value(row.get::<String,_>("nama"));
-        sheet.get_cell_mut((3,r)).set_value(row.get::<String,_>("kode"));
-        sheet.get_cell_mut((4,r)).set_value(row.get::<Option<String>,_>("contact").unwrap_or_default());
-        sheet.get_cell_mut((5,r)).set_value(row.get::<Option<String>,_>("no_hp").unwrap_or_default());
-        sheet.get_cell_mut((6,r)).set_value(row.get::<Option<String>,_>("alamat").unwrap_or_default());
-        sheet.get_cell_mut((7,r)).set_value(row.get::<Option<String>,_>("tipe").unwrap_or_default());
+        sheet.get_cell_mut((1u32, r)).set_value(row.get::<Uuid,_>("id").to_string());
+        sheet.get_cell_mut((2u32, r)).set_value(row.get::<String,_>("nama"));
+        sheet.get_cell_mut((3u32, r)).set_value(row.get::<String,_>("kode"));
+        sheet.get_cell_mut((4u32, r)).set_value(row.get::<Option<String>,_>("contact").unwrap_or_default());
+        sheet.get_cell_mut((5u32, r)).set_value(row.get::<Option<String>,_>("no_hp").unwrap_or_default());
+        sheet.get_cell_mut((6u32, r)).set_value(row.get::<Option<String>,_>("alamat").unwrap_or_default());
+        sheet.get_cell_mut((7u32, r)).set_value(row.get::<Option<String>,_>("tipe").unwrap_or_default());
     }
 
     let mut buffer = Vec::new();
