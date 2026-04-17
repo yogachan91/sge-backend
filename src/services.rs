@@ -665,26 +665,53 @@ pub async fn search_po(
     };
 
     let format_date = |d: Option<NaiveDate>| {
-        d.map(|x| x.format("%d %b %Y").to_string()).unwrap_or("-".into())
+        d.map(|x| x.format("%d %b %Y").to_string())
+            .unwrap_or("-".to_string())
     };
 
     let mut results = Vec::new();
 
     for row in rows {
+
         let qty = row.qty.unwrap_or(0);
+        let total = row.total.unwrap_or(0);
 
         results.push(PoResponse {
             id: row.no_po,
             client: "PT Sumitomo Wiring Systems".to_string(),
-            product: row.part_number.unwrap_or("-".into()),
+            product: row.part_number.unwrap_or("-".to_string()),
             qty,
             deadline: format_date(row.delivery_time),
             po_date: format_date(row.tgl_po),
-            current_stage: "materialCheck".into(),
+            current_stage: "materialCheck".to_string(),
             stage_entered_date: format_date(row.tgl_po),
+
             stages: json!({
-                "materialCheck": { "status":"pending","materials":[] },
-                "production": { "status":"pending","progress":0,"target":qty }
+                "materialCheck": {
+                    "status": "pending",
+                    "materials": [],
+                    "aiInsight": "Belum dilakukan pengecekan material."
+                },
+                "loa": {
+                    "status": "pending"
+                },
+                "production": {
+                    "status": "pending",
+                    "progress": 0,
+                    "target": qty
+                },
+                "delivery": {
+                    "status": "pending",
+                    "deliveryOrders": []
+                },
+                "closing": {
+                    "status": "pending",
+                    "invoiceAmount": total,
+                    "paymentStatus": "unpaid",
+                    "poHealth": "good",
+                    "poHealthNote": "Masih aman",
+                    "aiInsight": "Perlu monitoring harga bahan baku."
+                }
             }),
         });
     }
