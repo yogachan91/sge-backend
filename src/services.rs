@@ -483,7 +483,16 @@ pub async fn process_excel_part_number(
 // ========================
 fn excel_date_to_naive_date(value: &DataType) -> Option<NaiveDate> {
     match value {
-        DataType::String(s) => NaiveDate::parse_from_str(s, "%d-%m-%Y").ok(),
+        DataType::DateTime(f) => {
+            // ini format asli Excel date
+            let base = NaiveDate::from_ymd_opt(1899, 12, 30)?;
+            Some(base + Duration::days(*f as i64))
+        }
+        DataType::String(s) => {
+            NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .or_else(|_| NaiveDate::parse_from_str(s, "%d-%m-%Y"))
+                .ok()
+        }
         DataType::Float(f) => {
             let base = NaiveDate::from_ymd_opt(1899, 12, 30)?;
             Some(base + Duration::days(*f as i64))
