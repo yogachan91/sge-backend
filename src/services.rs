@@ -636,14 +636,16 @@ pub async fn search_po(
             r#"
             SELECT 
                 no_po,
-                MAX(kode) as kode,
+                b.nama as vendor,
+                MAX(a.kode) as kode,
                 MAX(part_number) as part_number,
                 SUM(qty)::BIGINT as qty,
                 SUM(total)::BIGINT as total,
                 MAX(tgl_po) as tgl_po,
                 MAX(delivery_time) as delivery_time
-            FROM po_cs
-            GROUP BY no_po
+            FROM po_cs as a
+			JOIN data_master as b ON a.kode=b.kode
+            GROUP BY no_po, b.nama
             ORDER BY MAX(tgl_po) DESC
             LIMIT 7
             "#
@@ -657,15 +659,18 @@ pub async fn search_po(
             r#"
             SELECT 
                 no_po,
-                MAX(kode) as kode,
+                b.nama as vendor,
+                MAX(a.kode) as kode,
                 MAX(part_number) as part_number,
                 SUM(qty)::BIGINT as qty,
                 SUM(total)::BIGINT as total,
                 MAX(tgl_po) as tgl_po,
                 MAX(delivery_time) as delivery_time
-            FROM po_cs
-            WHERE no_po = $1
-            GROUP BY no_po
+            FROM po_cs as a
+            JOIN data_master as b ON a.kode=b.kode
+            WHERE no_po = $1 OR b.nama = $1
+            GROUP BY no_po, b.nama
+            ORDER BY MAX(tgl_po) DESC
             "#
         )
         .bind(filter)
@@ -687,7 +692,7 @@ pub async fn search_po(
 
         results.push(PoResponse {
             id: row.no_po,
-            client: "PT Sumitomo Wiring Systems".to_string(),
+            client: row.vendor,
             product: row.part_number.unwrap_or("-".to_string()),
             qty,
             deadline: format_date(row.delivery_time),

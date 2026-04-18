@@ -75,6 +75,7 @@ pub struct PoRow {
 #[derive(Debug, FromRow)]
 pub struct PoGroupRow {
     pub no_po: String,
+    pub vendor: String,
     pub kode: Option<String>,
     pub part_number: Option<String>,
     pub qty: Option<i64>,
