@@ -392,7 +392,7 @@ use chrono::{NaiveDate, Duration};
 use serde_json::json;
 use umya_spreadsheet::*;
 
-use crate::models::{PoResponse, PoGroupRow};
+use crate::models::{PoResponse, PoGroupRow, PartNumberItem};
 
 // ========================
 // PROCESS EXCEL MASTER
@@ -630,53 +630,37 @@ pub async fn search_po(
     filter: String,
 ) -> Result<Vec<PoResponse>, Box<dyn std::error::Error>> {
 
-    let rows: Vec<PoGroupRow> = if filter.trim().is_empty() {
+    let rows: Vec<PoGroupRow> = sqlx::query_as::<_, PoGroupRow>(
+        r#"
+        SELECT 
+            a.no_po,
+            b.nama as vendor,
+            SUM(a.qty)::BIGINT as qty,
+            SUM(a.total)::BIGINT as total,
+            MAX(a.tgl_po) as tgl_po,
+            MAX(a.delivery_time) as delivery_time,
 
-        sqlx::query_as::<_, PoGroupRow>(
-            r#"
-            SELECT 
-                no_po,
-                b.nama as vendor,
-                MAX(a.kode) as kode,
-                MAX(part_number) as part_number,
-                SUM(qty)::BIGINT as qty,
-                SUM(total)::BIGINT as total,
-                MAX(tgl_po) as tgl_po,
-                MAX(delivery_time) as delivery_time
-            FROM po_cs as a
-			JOIN data_master as b ON a.kode=b.kode
-            GROUP BY no_po, b.nama
-            ORDER BY MAX(tgl_po) DESC
-            LIMIT 7
-            "#
-        )
-        .fetch_all(pool)
-        .await?
+            json_agg(
+                json_build_object(
+                    'nama', a.part_number,
+                    'tgl_po', to_char(a.tgl_po, 'DD Mon YYYY'),
+                    'tgl_delivery', to_char(a.delivery_time, 'DD Mon YYYY')
+                )
+            ) as part_numbers
 
-    } else {
+        FROM po_cs a
+        JOIN data_master b ON a.kode = b.kode
 
-        sqlx::query_as::<_, PoGroupRow>(
-            r#"
-            SELECT 
-                no_po,
-                b.nama as vendor,
-                MAX(a.kode) as kode,
-                MAX(part_number) as part_number,
-                SUM(qty)::BIGINT as qty,
-                SUM(total)::BIGINT as total,
-                MAX(tgl_po) as tgl_po,
-                MAX(delivery_time) as delivery_time
-            FROM po_cs as a
-            JOIN data_master as b ON a.kode=b.kode
-            WHERE no_po = $1 OR b.nama = $1
-            GROUP BY no_po, b.nama
-            ORDER BY MAX(tgl_po) DESC
-            "#
-        )
-        .bind(filter)
-        .fetch_all(pool)
-        .await?
-    };
+        WHERE ($1 = '' OR a.no_po = $1 OR b.nama = $1)
+
+        GROUP BY a.no_po, b.nama
+        ORDER BY MAX(a.tgl_po) DESC
+        LIMIT 7
+        "#
+    )
+    .bind(filter.clone())
+    .fetch_all(pool)
+    .await?;
 
     let format_date = |d: Option<NaiveDate>| {
         d.map(|x| x.format("%d %b %Y").to_string())
@@ -690,15 +674,26 @@ pub async fn search_po(
         let qty = row.qty.unwrap_or(0);
         let total = row.total.unwrap_or(0);
 
+        // 🔥 parsing JSON → Vec struct
+        let part_numbers: Vec<PartNumberItem> =
+            serde_json::from_value(row.part_numbers).unwrap_or(vec![]);
+
+        let product = part_numbers
+            .get(0)
+            .map(|p| p.nama.clone())
+            .unwrap_or("-".to_string());
+
         results.push(PoResponse {
             id: row.no_po,
             client: row.vendor,
-            product: row.part_number.unwrap_or("-".to_string()),
+            product,
             qty,
             deadline: format_date(row.delivery_time),
             po_date: format_date(row.tgl_po),
             current_stage: "materialCheck".to_string(),
             stage_entered_date: format_date(row.tgl_po),
+
+            part_number: part_numbers, // ✅ ARRAY
 
             stages: json!({
                 "materialCheck": {

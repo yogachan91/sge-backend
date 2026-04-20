@@ -53,6 +53,7 @@ pub struct PoResponse {
     pub po_date: String,
     pub current_stage: String,
     pub stage_entered_date: String,
+    pub part_number: Vec<PartNumberItem>,
     pub stages: serde_json::Value,
 }
 
@@ -76,10 +77,16 @@ pub struct PoRow {
 pub struct PoGroupRow {
     pub no_po: String,
     pub vendor: String,
-    pub kode: Option<String>,
-    pub part_number: Option<String>,
+    pub part_numbers: serde_json::Value,
     pub qty: Option<i64>,
     pub total: Option<i64>,
     pub tgl_po: Option<NaiveDate>,
     pub delivery_time: Option<NaiveDate>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PartNumberItem {
+    pub nama: String,
+    pub tgl_po: String,
+    pub tgl_delivery: String,
 }
