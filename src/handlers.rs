@@ -9,6 +9,7 @@ use crate::services::process_excel_create_po_cs;
 use crate::services::export_excel;
 use crate::models::SearchPoRequest;
 use crate::services::search_po;
+use crate::services::process_excel_material;
 
 pub async fn upload_excel(
     pool: web::Data<PgPool>,
@@ -108,6 +109,29 @@ pub async fn search_po_handler(
 
     match search_po(&pool, req.filters.clone()).await {
         Ok(data) => HttpResponse::Ok().json(data),
+        Err(e) => HttpResponse::InternalServerError()
+            .body(format!("Error: {}", e)),
+    }
+}
+
+pub async fn upload_excel_material(
+    pool: web::Data<PgPool>,
+    mut payload: Multipart,
+) -> HttpResponse {
+
+    let mut file_bytes = Vec::new();
+
+    while let Some(item) = payload.next().await {
+        let mut field = item.unwrap();
+
+        while let Some(chunk) = field.next().await {
+            let data = chunk.unwrap();
+            file_bytes.extend_from_slice(&data);
+        }
+    }
+
+    match crate::services::process_excel_material(&pool, file_bytes).await {
+        Ok(_) => HttpResponse::Ok().body("Upload material sukses"),
         Err(e) => HttpResponse::InternalServerError()
             .body(format!("Error: {}", e)),
     }

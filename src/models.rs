@@ -41,6 +41,7 @@ pub struct PoCs {
     pub tanggal_delivery: Option<NaiveDate>,
     pub status_delivery: String,
     pub status_spk: String,
+    pub status_material: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -81,6 +82,7 @@ pub struct PoRow {
     pub tanggal_delivery: Option<NaiveDate>,
     pub status_delivery: String,
     pub status_spk: String,
+    pub status_material: String,
 }
 
 #[derive(Debug, FromRow)]
@@ -88,6 +90,7 @@ pub struct PoGroupRow {
     pub no_po: String,
     pub vendor: String,
     pub part_numbers: serde_json::Value,
+    pub materials: Option<serde_json::Value>,
     pub qty: Option<i64>,
     pub total: Option<i64>,
     pub tgl_po: Option<NaiveDate>,

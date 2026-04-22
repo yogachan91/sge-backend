@@ -551,9 +551,9 @@ pub async fn process_excel_create_po_cs(
         let no_spk = row.get(11).map(|c| c.to_string()).unwrap_or_default();
         let qty_terdeliver = parse_i64(row.get(12));
         let tanggal_delivery = row.get(13).and_then(excel_date_to_naive_date);
-        let status_delivery = row.get(14).map(|c| c.to_string()).unwrap_or_default();
-        let status_spk = row.get(15).map(|c| c.to_string()).unwrap_or_default();
-
+        let status_spk = row.get(14).map(|c| c.to_string()).unwrap_or_default();
+        let status_delivery = row.get(15).map(|c| c.to_string()).unwrap_or_default();
+        let status_material = row.get(16).map(|c| c.to_string()).unwrap_or_default();
 
         sqlx::query(
             r#"
@@ -561,9 +561,9 @@ pub async fn process_excel_create_po_cs(
                 id, kode, no_po, part_number,
                 qty, qty_outstanding, harga_satuan, total,
                 tgl_po, status, delivery_time, target_prod,
-                no_spk, qty_terdeliver, tanggal_delivery, status_delivery, status_spk
+                no_spk, qty_terdeliver, tanggal_delivery, status_delivery, status_spk, status_material
             )
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
             "#
         )
         .bind(Uuid::new_v4())
@@ -583,6 +583,7 @@ pub async fn process_excel_create_po_cs(
         .bind(tanggal_delivery)
         .bind(status_delivery)
         .bind(status_spk)
+        .bind(status_material)
         .execute(pool)
         .await?;
     }
@@ -635,6 +636,78 @@ pub async fn export_excel(
     Ok(buffer)
 }
 
+pub async fn process_excel_material(
+    pool: &PgPool,
+    file_bytes: Vec<u8>,
+) -> Result<(), Box<dyn std::error::Error>> {
+
+    let file_path = "temp_material.xlsx";
+    let mut file = File::create(file_path)?;
+    file.write_all(&file_bytes)?;
+
+    let mut workbook = open_workbook_auto(file_path)?;
+    let range = workbook.worksheet_range_at(0).ok_or("Sheet not found")??;
+
+    for row in range.rows().skip(1) {
+
+        let kode = row.get(0).map(|c| c.to_string()).unwrap_or_default();
+        let no_po = row.get(1).map(|c| c.to_string()).unwrap_or_default();
+        let part_number = row.get(2).map(|c| c.to_string()).unwrap_or_default();
+        let nm_material = row.get(3).map(|c| c.to_string());
+        let tipe = row.get(4).map(|c| c.to_string());
+        let unit = row.get(5).map(|c| c.to_string());
+
+        let butuh_qty = parse_i64(row.get(7));
+        let stock_gudang_qty = parse_i64(row.get(8));
+        let sisa_stock_gudang = parse_i64(row.get(9));
+        let allocated = parse_i64(row.get(10));
+
+        let status = row.get(11).map(|c| c.to_string());
+
+        let satuan = row.get(6).and_then(|c| match c {
+            DataType::Float(v) => Some(*v),
+            DataType::Int(v) => Some(*v as f64),
+            DataType::String(s) => s.parse::<f64>().ok(),
+            _ => None,
+        });
+
+        sqlx::query(
+            r#"
+            INSERT INTO material (
+                id, kode, no_po, part_number,
+                nm_material, tipe, unit,
+                butuh_qty, stock_gudang_qty, sisa_stock_gudang, allocated,
+                status, satuan
+            )
+            VALUES (
+                $1,$2,$3,$4,
+                $5,$6,$7,
+                $8,$9,$10,$11,
+                $12,$13
+            )
+            "#
+        )
+        .bind(Uuid::new_v4())
+        .bind(kode)
+        .bind(no_po)
+        .bind(part_number)
+        .bind(nm_material)
+        .bind(tipe)
+        .bind(unit)
+        .bind(butuh_qty)
+        .bind(stock_gudang_qty)
+        .bind(sisa_stock_gudang)
+        .bind(allocated)
+        .bind(status)
+        .bind(satuan)
+        .execute(pool)
+        .await?;
+    }
+
+    std::fs::remove_file(file_path)?;
+    Ok(())
+}
+
 // ========================
 // SEARCH PO
 // ========================
@@ -646,33 +719,49 @@ pub async fn search_po(
     let rows: Vec<PoGroupRow> = sqlx::query_as::<_, PoGroupRow>(
         r#"
         SELECT 
-            a.no_po,
-            b.nama as vendor,
-            SUM(a.qty)::BIGINT as qty,
-            SUM(a.total)::BIGINT as total,
-            MAX(a.tgl_po) as tgl_po,
-            MAX(a.delivery_time) as delivery_time,
+        a.no_po,
+        b.nama as vendor,
+        SUM(a.qty)::BIGINT as qty,
+        SUM(a.total)::BIGINT as total,
+        MAX(a.tgl_po) as tgl_po,
+        MAX(a.delivery_time) as delivery_time,
 
-            json_agg(
+        json_agg(
+            json_build_object(
+                'nama', a.part_number,
+                'qty', a.qty,
+                'tgl_po', to_char(a.tgl_po, 'DD Mon YYYY'),
+                'delivery_time', to_char(a.delivery_time, 'DD Mon YYYY'),
+                'qty_terdeliver', a.qty_terdeliver,
+                'tanggal_delivery', to_char(a.tanggal_delivery, 'DD Mon YYYY'),
+                'status', a.status
+            )
+        ) as part_numbers,
+
+        -- ✅ NEW MATERIALS
+        (
+            SELECT json_agg(
                 json_build_object(
-                    'nama', a.part_number,
-                    'qty', a.qty,
-                    'tgl_po', to_char(a.tgl_po, 'DD Mon YYYY'),
-                    'delivery_time', to_char(a.delivery_time, 'DD Mon YYYY'),
-                    'qty_terdeliver', a.qty_terdeliver,
-                    'tanggal_delivery', to_char(a.tanggal_delivery, 'DD Mon YYYY'),
-                    'status', a.status
+                    'name', m.nm_material,
+                    'required', m.butuh_qty,
+                    'unit', m.unit,
+                    'status', m.status,
+                    'currentStock', m.stock_gudang_qty,
+                    'allocated', m.allocated
                 )
-            ) as part_numbers
+            )
+            FROM material m
+            WHERE m.no_po = a.no_po
+        ) as materials
 
-        FROM po_cs a
-        JOIN data_master b ON a.kode = b.kode
+    FROM po_cs a
+    JOIN data_master b ON a.kode = b.kode
 
-        WHERE ($1 = '' OR a.no_po = $1 OR b.nama = $1)
+    WHERE ($1 = '' OR a.no_po = $1 OR b.nama = $1)
 
-        GROUP BY a.no_po, b.nama
-        ORDER BY MAX(a.tgl_po) DESC
-        LIMIT 7
+    GROUP BY a.no_po, b.nama
+    ORDER BY MAX(a.tgl_po) DESC
+    LIMIT 7
         "#
     )
     .bind(filter.clone())
@@ -694,6 +783,11 @@ pub async fn search_po(
         // 🔥 parsing JSON → Vec struct
         let part_numbers: Vec<PartNumberItem> =
             serde_json::from_value(row.part_numbers).unwrap_or(vec![]);
+
+        let materials: Vec<serde_json::Value> =
+            row.materials
+            .map(|m| serde_json::from_value(m).unwrap_or(vec![]))
+            .unwrap_or(vec![]);
 
         let product = part_numbers
             .get(0)
@@ -728,8 +822,8 @@ pub async fn search_po(
             stages: json!({
                 "materialCheck": {
                     "status": "pending",
-                    "materials": [],
-                    "aiInsight": "Belum dilakukan pengecekan material."
+                    "materials": materials,
+                    "aiInsight": "Loading..."
                 },
                 "loa": {
                     "status": "pending",

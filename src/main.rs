@@ -30,6 +30,7 @@ async fn main() -> std::io::Result<()> {
             .route("/export", web::get().to(handlers::download_excel))
             .route("/create-po-cs", web::post().to(handlers::upload_excel_create_po_cs))
             .route("/search-po", web::post().to(handlers::search_po_handler))
+            .route("/upload-material", web::post().to(handlers::upload_excel_material))
     })
     .bind(("0.0.0.0", 8080))?
     .run()
