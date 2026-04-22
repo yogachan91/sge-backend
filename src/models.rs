@@ -36,6 +36,11 @@ pub struct PoCs {
     pub status: String,
     pub delivery_time: Option<NaiveDate>,
     pub target_prod: Option<NaiveDate>,
+    pub no_spk: String,
+    pub qty_terdeliver: Option<i64>,
+    pub tanggal_delivery: Option<NaiveDate>,
+    pub status_delivery: String,
+    pub status_spk: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -71,6 +76,11 @@ pub struct PoRow {
     pub status: String,
     pub delivery_time: Option<NaiveDate>,
     pub target_prod: Option<NaiveDate>,
+    pub no_spk: String,
+    pub qty_terdeliver: Option<i64>,
+    pub tanggal_delivery: Option<NaiveDate>,
+    pub status_delivery: String,
+    pub status_spk: String,
 }
 
 #[derive(Debug, FromRow)]
@@ -87,6 +97,10 @@ pub struct PoGroupRow {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PartNumberItem {
     pub nama: String,
+    pub qty: Option<i64>,
     pub tgl_po: String,
-    pub tgl_delivery: String,
+    pub delivery_time: String,
+    pub qty_terdeliver: Option<i64>,
+    pub tanggal_delivery: Option<String>,
+    pub status: String,
 }

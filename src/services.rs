@@ -548,14 +548,22 @@ pub async fn process_excel_create_po_cs(
         let delivery_time = row.get(9).and_then(excel_date_to_naive_date);
         let target_prod = row.get(10).and_then(excel_date_to_naive_date);
 
+        let no_spk = row.get(11).map(|c| c.to_string()).unwrap_or_default();
+        let qty_terdeliver = parse_i64(row.get(12));
+        let tanggal_delivery = row.get(13).and_then(excel_date_to_naive_date);
+        let status_delivery = row.get(14).map(|c| c.to_string()).unwrap_or_default();
+        let status_spk = row.get(15).map(|c| c.to_string()).unwrap_or_default();
+
+
         sqlx::query(
             r#"
             INSERT INTO po_cs (
                 id, kode, no_po, part_number,
                 qty, qty_outstanding, harga_satuan, total,
-                tgl_po, status, delivery_time, target_prod
+                tgl_po, status, delivery_time, target_prod,
+                no_spk, qty_terdeliver, tanggal_delivery, status_delivery, status_spk
             )
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
             "#
         )
         .bind(Uuid::new_v4())
@@ -570,6 +578,11 @@ pub async fn process_excel_create_po_cs(
         .bind(status)
         .bind(delivery_time)
         .bind(target_prod)
+        .bind(no_spk)
+        .bind(qty_terdeliver)
+        .bind(tanggal_delivery)
+        .bind(status_delivery)
+        .bind(status_spk)
         .execute(pool)
         .await?;
     }
@@ -643,8 +656,12 @@ pub async fn search_po(
             json_agg(
                 json_build_object(
                     'nama', a.part_number,
+                    'qty', a.qty,
                     'tgl_po', to_char(a.tgl_po, 'DD Mon YYYY'),
-                    'tgl_delivery', to_char(a.delivery_time, 'DD Mon YYYY')
+                    'delivery_time', to_char(a.delivery_time, 'DD Mon YYYY'),
+                    'qty_terdeliver', a.qty_terdeliver,
+                    'tanggal_delivery', to_char(a.tanggal_delivery, 'DD Mon YYYY'),
+                    'status', a.status
                 )
             ) as part_numbers
 
@@ -683,6 +700,19 @@ pub async fn search_po(
             .map(|p| p.nama.clone())
             .unwrap_or("-".to_string());
 
+        let delivery_orders: Vec<serde_json::Value> = part_numbers
+    .iter()
+    .map(|p| {
+        json!({
+            "doNumber": p.nama,
+            "qty": p.qty.unwrap_or(0),
+            "status": "pending",
+            "scheduledDate": p.delivery_time,
+            "courier": "-"
+        })
+    })
+    .collect();
+
         results.push(PoResponse {
             id: row.no_po,
             client: row.vendor,
@@ -702,7 +732,11 @@ pub async fn search_po(
                     "aiInsight": "Belum dilakukan pengecekan material."
                 },
                 "loa": {
-                    "status": "pending"
+                    "status": "pending",
+                    "loaNumber": "LoA-SGE-2026-002",
+                    "issuedDate": "-",
+                    "referencedMaterials": "-",
+                    "assignedJobTask": "-",
                 },
                 "production": {
                     "status": "pending",
@@ -711,7 +745,7 @@ pub async fn search_po(
                 },
                 "delivery": {
                     "status": "pending",
-                    "deliveryOrders": []
+                    "deliveryOrders": delivery_orders
                 },
                 "closing": {
                     "status": "pending",
