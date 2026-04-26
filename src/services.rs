@@ -720,6 +720,10 @@ pub async fn search_po(
         r#"
         SELECT 
         a.no_po,
+        a.status_material as status_material,
+        a.status_delivery as status_delivery,
+        a.status_spk as status_spk,
+        a.no_spk as no_spk,
         b.nama as vendor,
         SUM(a.qty)::BIGINT as qty,
         SUM(a.total)::BIGINT as total,
@@ -791,7 +795,7 @@ pub async fn search_po(
     OR b.nama ILIKE '%' || $1 || '%'
     )
 
-    GROUP BY a.no_po, b.nama
+    GROUP BY a.no_po, b.nama, a.status_material, a.status_spk, a.status_delivery, a.no_spk
     ORDER BY MAX(a.tgl_po) DESC
     LIMIT 7
         "#
@@ -811,10 +815,28 @@ pub async fn search_po(
 
         let qty = row.qty.unwrap_or(0);
         let total = row.total.unwrap_or(0);
+        let status_material = row.status_material.clone().unwrap_or("pending".to_string());
+        let status_spk = row.status_spk.clone().unwrap_or("pending".to_string());
+        let status_delivery = row.status_delivery.clone().unwrap_or("pending".to_string());
+        let no_spk = row.no_spk.clone().unwrap_or("-".to_string());
 
         // 🔥 parsing JSON → Vec struct
         let part_numbers: Vec<PartNumberItem> =
             serde_json::from_value(row.part_numbers).unwrap_or(vec![]);
+
+        let mut loa = json!({
+            "status": status_spk,
+            "loaNumber": no_spk
+        });
+
+        if status_spk == "pending" {
+            if let Some(obj) = loa.as_object_mut() {
+                obj.insert(
+                    "aiInsight".to_string(),
+                    json!("Semua P/N sedang dalam pengecheckan material.")
+                );
+            }
+        }
 
         let materials: Vec<serde_json::Value> =
             row.materials
@@ -839,6 +861,23 @@ pub async fn search_po(
     })
     .collect();
 
+        let mut delivery = json!({
+            "status": status_delivery,
+            "deliveryOrders": delivery_orders
+        });
+
+        if status_material == "blocked" {
+            if let Some(obj) = delivery.as_object_mut() {
+                obj.insert(
+                    "aiInsight".to_string(),
+                    json!(format!(
+                        "Pending P/N {} Pcs dikarenakan ada beberapa stock barang di gudang yang tidak sesuai",
+                        qty
+                    ))
+                );
+            }
+        }
+
         results.push(PoResponse {
             id: row.no_po,
             client: row.vendor,
@@ -853,22 +892,16 @@ pub async fn search_po(
 
             stages: json!({
                 "materialCheck": {
-                    "status": "pending",
+                    "status": status_material,
                     "materials": materials
                 },
-                "loa": {
-                    "status": "completed",
-                    "loaNumber": "LoA-SGE-2026-002"
-                },
+                "loa": loa,
                 "production": {
                     "status": "pending",
                     "progress": 0,
                     "target": qty
                 },
-                "delivery": {
-                    "status": "pending",
-                    "deliveryOrders": delivery_orders
-                },
+                "delivery": delivery,
                 "closing": {
                     "status": "pending",
                     "invoiceAmount": total,

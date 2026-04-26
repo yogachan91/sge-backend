@@ -95,6 +95,10 @@ pub struct PoGroupRow {
     pub total: Option<i64>,
     pub tgl_po: Option<NaiveDate>,
     pub delivery_time: Option<NaiveDate>,
+    pub status_material: Option<String>,
+    pub status_delivery: Option<String>,
+    pub status_spk: Option<String>,
+    pub no_spk: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
