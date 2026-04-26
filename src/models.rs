@@ -107,3 +107,8 @@ pub struct PartNumberItem {
     pub tanggal_delivery: Option<String>,
     pub status: String,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct ChatRequest {
+    pub message: String,
+}

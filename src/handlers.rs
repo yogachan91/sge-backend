@@ -2,6 +2,9 @@ use actix_multipart::Multipart;
 use actix_web::{web, HttpResponse};
 use futures_util::StreamExt;
 use sqlx::PgPool;
+use crate::services::chat_ollama;
+use crate::models::ChatRequest;
+
 
 use crate::services::process_excel;
 use crate::services::process_excel_part_number;
@@ -132,6 +135,19 @@ pub async fn upload_excel_material(
 
     match crate::services::process_excel_material(&pool, file_bytes).await {
         Ok(_) => HttpResponse::Ok().body("Upload material sukses"),
+        Err(e) => HttpResponse::InternalServerError()
+            .body(format!("Error: {}", e)),
+    }
+}
+
+pub async fn chat_handler(
+    req: web::Json<ChatRequest>,
+) -> HttpResponse {
+
+    match chat_ollama(req.message.clone()).await {
+        Ok(res) => HttpResponse::Ok().json(serde_json::json!({
+            "reply": res
+        })),
         Err(e) => HttpResponse::InternalServerError()
             .body(format!("Error: {}", e)),
     }

@@ -743,21 +743,53 @@ pub async fn search_po(
             SELECT json_agg(
                 json_build_object(
                     'name', m.nm_material,
-                    'required', m.butuh_qty,
+                    'required', m.total_required,
                     'unit', m.unit,
-                    'status', m.status,
+                    'status',
+                    CASE
+                        WHEN m.stock_gudang_qty >= m.total_required THEN 'ok'
+                        WHEN m.stock_gudang_qty > 0 THEN 'low'
+                        ELSE 'out'
+                    END,
                     'currentStock', m.stock_gudang_qty,
-                    'allocated', m.allocated
+                    'allocated',
+                    CASE
+                        WHEN m.stock_gudang_qty <= 0 THEN 0
+                        ELSE LEAST(m.stock_gudang_qty, m.total_required)
+                    END,
+                    'aiInsight',
+                    CASE
+                        WHEN m.stock_gudang_qty >= m.total_required THEN NULL
+                        ELSE 
+                        'Stok ' || m.nm_material ||
+                        ' tidak cukup untuk order ini, silahkan hubungi ' || m.nm_supplier ||
+                        ' untuk menambahkan stock barang yang kurang'
+                    END
                 )
             )
-            FROM material m
-            WHERE m.no_po = a.no_po
+            FROM (
+                SELECT 
+                    z.nm_material as nm_material,
+                    n.nama as nm_supplier,
+                    SUM(z.butuh_qty) as total_required,
+                    MAX(z.stock_gudang_qty) as stock_gudang_qty,
+                    MAX(z.unit) as unit
+                FROM material z
+                JOIN part_number s ON s.nomor = z.nm_material
+                JOIN data_master n ON n.id::text  = s.id_master
+                WHERE no_po = a.no_po
+                GROUP BY z.nm_material, n.nama
+            ) m
         ) as materials
 
     FROM po_cs a
     JOIN data_master b ON a.kode = b.kode
 
-    WHERE ($1 = '' OR a.no_po = $1 OR b.nama = $1)
+    WHERE (
+    $1 = '' 
+    OR a.no_po ILIKE '%' || $1 || '%'
+    OR b.nama ILIKE '%' || $1 || '%'
+    )
 
     GROUP BY a.no_po, b.nama
     ORDER BY MAX(a.tgl_po) DESC
@@ -822,15 +854,11 @@ pub async fn search_po(
             stages: json!({
                 "materialCheck": {
                     "status": "pending",
-                    "materials": materials,
-                    "aiInsight": "Loading..."
+                    "materials": materials
                 },
                 "loa": {
-                    "status": "pending",
-                    "loaNumber": "LoA-SGE-2026-002",
-                    "issuedDate": "-",
-                    "referencedMaterials": "-",
-                    "assignedJobTask": "-",
+                    "status": "completed",
+                    "loaNumber": "LoA-SGE-2026-002"
                 },
                 "production": {
                     "status": "pending",
@@ -854,4 +882,30 @@ pub async fn search_po(
     }
 
     Ok(results)
+}
+
+pub async fn chat_ollama(
+    prompt: String,
+) -> Result<String, Box<dyn std::error::Error>> {
+
+    let client = reqwest::Client::new();
+
+    let res = client
+        .post("http://100.124.115.86:11434/api/generate")
+        .json(&serde_json::json!({
+            "model": "phi3", // pastikan model ada
+            "prompt": prompt,
+            "stream": false
+        }))
+        .send()
+        .await?;
+
+    let json: serde_json::Value = res.json().await?;
+
+    let response = json["response"]
+        .as_str()
+        .unwrap_or("No response")
+        .to_string();
+
+    Ok(response)
 }
