@@ -708,6 +708,56 @@ pub async fn process_excel_material(
     Ok(())
 }
 
+
+
+pub async fn process_excel_produksi(
+    pool: &PgPool,
+    file_bytes: Vec<u8>,
+) -> Result<(), Box<dyn std::error::Error>> {
+
+    let file_path = "temp_produksi.xlsx";
+    let mut file = File::create(file_path)?;
+    file.write_all(&file_bytes)?;
+
+    let mut workbook = open_workbook_auto(file_path)?;
+    let range = workbook.worksheet_range_at(0).ok_or("Sheet not found")??;
+
+    for row in range.rows().skip(1) {
+
+        let kode = row.get(0).map(|c| c.to_string()).unwrap_or_default();
+        let no_po = row.get(1).map(|c| c.to_string()).unwrap_or_default();
+        let part_number = row.get(2).map(|c| c.to_string()).unwrap_or_default();
+        let tahapan = row.get(3).map(|c| c.to_string());
+        let jumlah = parse_i64(row.get(4));
+        let nomor = parse_i64(row.get(5));
+
+        sqlx::query(
+            r#"
+            INSERT INTO produksi (
+                id, kode, no_po, part_number,
+                tahapan, jumlah, nomor
+            )
+            VALUES (
+                $1,$2,$3,$4,
+                $5,$6,$7
+            )
+            "#
+        )
+        .bind(Uuid::new_v4())
+        .bind(kode)
+        .bind(no_po)
+        .bind(part_number)
+        .bind(tahapan)
+        .bind(jumlah)
+        .bind(nomor)
+        .execute(pool)
+        .await?;
+    }
+
+    std::fs::remove_file(file_path)?;
+    Ok(())
+}
+
 // ========================
 // SEARCH PO
 // ========================
@@ -719,75 +769,78 @@ pub async fn search_po(
     let rows: Vec<PoGroupRow> = sqlx::query_as::<_, PoGroupRow>(
         r#"
         SELECT 
-        a.no_po,
-        a.status_material as status_material,
-        a.status_delivery as status_delivery,
-        a.status_spk as status_spk,
-        a.no_spk as no_spk,
-        b.nama as vendor,
-        SUM(a.qty)::BIGINT as qty,
-        SUM(a.total)::BIGINT as total,
-        MAX(a.tgl_po) as tgl_po,
-        MAX(a.delivery_time) as delivery_time,
+    a.no_po,
 
-        json_agg(
+    MAX(a.status_material) as status_material,
+    MAX(a.status_delivery) as status_delivery,
+    MAX(a.status_produksi) as status_produksi,
+    MAX(a.status_spk) as status_spk,
+    MAX(a.no_spk) as no_spk,
+
+    b.nama as vendor,
+
+    SUM(a.qty)::BIGINT as qty,
+    SUM(a.total)::BIGINT as total,
+
+    MAX(a.tgl_po) as tgl_po,
+    MAX(a.delivery_time) as delivery_time,
+
+    -- ✅ PART NUMBER (tidak bikin duplicate)
+    json_agg(
+        json_build_object(
+            'nama', a.part_number,
+            'qty', a.qty,
+            'harga_satuan', a.harga_satuan,
+            'total', a.total,
+            'tgl_po', to_char(a.tgl_po, 'DD Mon YYYY'),
+            'delivery_time', to_char(a.delivery_time, 'DD Mon YYYY'),
+            'qty_terdeliver', a.qty_terdeliver,
+            'tanggal_delivery', to_char(a.tanggal_delivery, 'DD Mon YYYY'),
+            'status', a.status
+        )
+    ) as part_numbers,
+
+    -- ✅ MATERIALS (sudah benar)
+    (
+        SELECT json_agg(
             json_build_object(
-                'nama', a.part_number,
-                'qty', a.qty,
-                'tgl_po', to_char(a.tgl_po, 'DD Mon YYYY'),
-                'delivery_time', to_char(a.delivery_time, 'DD Mon YYYY'),
-                'qty_terdeliver', a.qty_terdeliver,
-                'tanggal_delivery', to_char(a.tanggal_delivery, 'DD Mon YYYY'),
-                'status', a.status
+                'name', m.nm_material,
+                'vendor', m.nm_supplier,
+                'jenis', m.tipe,
+                'required', m.total_required,
+                'unit', m.unit,
+                'status',
+                CASE
+                    WHEN m.stock_gudang_qty >= m.total_required THEN 'ok'
+                    WHEN m.stock_gudang_qty > 0 THEN 'low'
+                    ELSE 'out'
+                END,
+                'currentStock', m.stock_gudang_qty,
+                'allocated',
+                CASE
+                    WHEN m.stock_gudang_qty <= 0 THEN 0
+                    ELSE LEAST(m.stock_gudang_qty, m.total_required)
+                END
             )
-        ) as part_numbers,
+        )
+        FROM (
+            SELECT 
+                z.nm_material,
+                n.nama as nm_supplier,
+                z.tipe,
+                SUM(z.butuh_qty) as total_required,
+                MAX(z.stock_gudang_qty) as stock_gudang_qty,
+                MAX(z.unit) as unit
+            FROM material z
+            JOIN part_number s ON s.nomor = z.nm_material
+            JOIN data_master n ON n.id::text = s.id_master
+            WHERE z.no_po = a.no_po
+            GROUP BY z.nm_material, n.nama, z.tipe
+        ) m
+    ) as materials
 
-        -- ✅ NEW MATERIALS
-        (
-            SELECT json_agg(
-                json_build_object(
-                    'name', m.nm_material,
-                    'required', m.total_required,
-                    'unit', m.unit,
-                    'status',
-                    CASE
-                        WHEN m.stock_gudang_qty >= m.total_required THEN 'ok'
-                        WHEN m.stock_gudang_qty > 0 THEN 'low'
-                        ELSE 'out'
-                    END,
-                    'currentStock', m.stock_gudang_qty,
-                    'allocated',
-                    CASE
-                        WHEN m.stock_gudang_qty <= 0 THEN 0
-                        ELSE LEAST(m.stock_gudang_qty, m.total_required)
-                    END,
-                    'aiInsight',
-                    CASE
-                        WHEN m.stock_gudang_qty >= m.total_required THEN NULL
-                        ELSE 
-                        'Stok ' || m.nm_material ||
-                        ' tidak cukup untuk order ini, silahkan hubungi ' || m.nm_supplier ||
-                        ' untuk menambahkan stock barang yang kurang'
-                    END
-                )
-            )
-            FROM (
-                SELECT 
-                    z.nm_material as nm_material,
-                    n.nama as nm_supplier,
-                    SUM(z.butuh_qty) as total_required,
-                    MAX(z.stock_gudang_qty) as stock_gudang_qty,
-                    MAX(z.unit) as unit
-                FROM material z
-                JOIN part_number s ON s.nomor = z.nm_material
-                JOIN data_master n ON n.id::text  = s.id_master
-                WHERE no_po = a.no_po
-                GROUP BY z.nm_material, n.nama
-            ) m
-        ) as materials
-
-    FROM po_cs a
-    JOIN data_master b ON a.kode = b.kode
+FROM po_cs a
+JOIN data_master b ON a.kode = b.kode
 
     WHERE (
     $1 = '' 
@@ -795,9 +848,10 @@ pub async fn search_po(
     OR b.nama ILIKE '%' || $1 || '%'
     )
 
-    GROUP BY a.no_po, b.nama, a.status_material, a.status_spk, a.status_delivery, a.no_spk
-    ORDER BY MAX(a.tgl_po) DESC
-    LIMIT 7
+    GROUP BY a.no_po, b.nama
+
+ORDER BY MAX(a.tgl_po) DESC
+LIMIT 7
         "#
     )
     .bind(filter.clone())
@@ -818,22 +872,36 @@ pub async fn search_po(
         let status_material = row.status_material.clone().unwrap_or("pending".to_string());
         let status_spk = row.status_spk.clone().unwrap_or("pending".to_string());
         let status_delivery = row.status_delivery.clone().unwrap_or("pending".to_string());
+        let status_produksi = row.status_produksi.clone().unwrap_or("pending".to_string());
         let no_spk = row.no_spk.clone().unwrap_or("-".to_string());
 
         // 🔥 parsing JSON → Vec struct
         let part_numbers: Vec<PartNumberItem> =
             serde_json::from_value(row.part_numbers).unwrap_or(vec![]);
 
+        let loa_items: Vec<serde_json::Value> = part_numbers
+    .iter()
+    .map(|p| {
+        let spk = no_spk.clone();
+
+        json!({
+            "partNumber": p.nama,
+            "loaNumber": spk,
+            "status": if spk == "-" { "pending" } else { "available" }
+        })
+    })
+    .collect();
+
         let mut loa = json!({
             "status": status_spk,
-            "loaNumber": no_spk
+            "items": loa_items
         });
 
         if status_spk == "pending" {
             if let Some(obj) = loa.as_object_mut() {
                 obj.insert(
                     "aiInsight".to_string(),
-                    json!("Semua P/N sedang dalam pengecheckan material.")
+                    json!("Semua P/N Customer sedang dalam pengecheckan material.")
                 );
             }
         }
@@ -871,18 +939,63 @@ pub async fn search_po(
                 obj.insert(
                     "aiInsight".to_string(),
                     json!(format!(
-                        "Pending P/N {} Pcs dikarenakan ada beberapa stock barang di gudang yang tidak sesuai",
+                        "Pending P/N Customer {} Pcs dikarenakan ada beberapa stock barang di gudang yang tidak sesuai",
                         qty
                     ))
                 );
             }
         }
 
+        let mut problem_materials = Vec::new();
+
+        for m in &materials {
+        let status = m.get("status").and_then(|v| v.as_str()).unwrap_or("");
+    
+        if status == "low" || status == "out" {
+            let name = m.get("name").and_then(|v| v.as_str()).unwrap_or("-");
+            let vendor = m.get("vendor").and_then(|v| v.as_str()).unwrap_or("-");
+        
+            problem_materials.push(format!("{} (Vendor: {})", name, vendor));
+            }
+        }
+
+        let material_ai_insight = if problem_materials.is_empty() {
+        None
+        } else {
+            Some(format!(
+            "Stok material berikut tidak mencukupi: {}. Silahkan hubungi vendor terkait.",
+            problem_materials.join(", ")
+            ))
+        };
+
+        let production_data: Vec<serde_json::Value> = sqlx::query!(
+            r#"
+            SELECT part_number, tahapan, jumlah, nomor
+            FROM produksi
+            WHERE no_po = $1
+            ORDER BY nomor ASC
+        "#,
+        row.no_po
+        )
+        .fetch_all(pool)
+        .await?
+        .into_iter()
+        .map(|p| {
+        json!({
+            "partNumber": p.part_number,
+            "tahapan": p.tahapan,
+            "jumlah": p.jumlah,
+            "nomor": p.nomor
+            })
+        })
+        .collect();
+
         results.push(PoResponse {
             id: row.no_po,
             client: row.vendor,
             product,
             qty,
+            total,
             deadline: format_date(row.delivery_time),
             po_date: format_date(row.tgl_po),
             current_stage: "materialCheck".to_string(),
@@ -893,13 +1006,13 @@ pub async fn search_po(
             stages: json!({
                 "materialCheck": {
                     "status": status_material,
-                    "materials": materials
+                    "materials": materials,
+                    "aiInsight": material_ai_insight
                 },
                 "loa": loa,
                 "production": {
-                    "status": "pending",
-                    "progress": 0,
-                    "target": qty
+                    "status": status_produksi,
+                    "items": production_data
                 },
                 "delivery": delivery,
                 "closing": {

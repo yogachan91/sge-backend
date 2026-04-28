@@ -55,6 +55,7 @@ pub struct PoResponse {
     pub client: String,
     pub product: String,
     pub qty: i64,
+    pub total: i64,
     pub deadline: String,
     pub po_date: String,
     pub current_stage: String,
@@ -98,6 +99,7 @@ pub struct PoGroupRow {
     pub status_material: Option<String>,
     pub status_delivery: Option<String>,
     pub status_spk: Option<String>,
+    pub status_produksi: Option<String>,
     pub no_spk: Option<String>,
 }
 
@@ -105,6 +107,8 @@ pub struct PoGroupRow {
 pub struct PartNumberItem {
     pub nama: String,
     pub qty: Option<i64>,
+    pub harga_satuan: Option<i64>,
+    pub total: Option<i64>,
     pub tgl_po: String,
     pub delivery_time: String,
     pub qty_terdeliver: Option<i64>,

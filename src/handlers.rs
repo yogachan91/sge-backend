@@ -13,6 +13,7 @@ use crate::services::export_excel;
 use crate::models::SearchPoRequest;
 use crate::services::search_po;
 use crate::services::process_excel_material;
+use crate::services::process_excel_produksi;
 
 pub async fn upload_excel(
     pool: web::Data<PgPool>,
@@ -135,6 +136,29 @@ pub async fn upload_excel_material(
 
     match crate::services::process_excel_material(&pool, file_bytes).await {
         Ok(_) => HttpResponse::Ok().body("Upload material sukses"),
+        Err(e) => HttpResponse::InternalServerError()
+            .body(format!("Error: {}", e)),
+    }
+}
+
+pub async fn upload_excel_produksi(
+    pool: web::Data<PgPool>,
+    mut payload: Multipart,
+) -> HttpResponse {
+
+    let mut file_bytes = Vec::new();
+
+    while let Some(item) = payload.next().await {
+        let mut field = item.unwrap();
+
+        while let Some(chunk) = field.next().await {
+            let data = chunk.unwrap();
+            file_bytes.extend_from_slice(&data);
+        }
+    }
+
+    match crate::services::process_excel_produksi(&pool, file_bytes).await {
+        Ok(_) => HttpResponse::Ok().body("Upload produksi sukses"),
         Err(e) => HttpResponse::InternalServerError()
             .body(format!("Error: {}", e)),
     }
